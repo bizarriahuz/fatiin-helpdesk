@@ -56,7 +56,13 @@ async function TicketDetailContent({ params, searchParams }: TicketDetailPagePro
       .eq("id", ticketId)
       .maybeSingle();
     if (fallback.error || !fallback.data) notFound();
-    ticket = { ...fallback.data, mosque: "Unspecified", priority: "normal", asset_id: null };
+    ticket = {
+      ...fallback.data,
+      mosque: "Unspecified",
+      ticket_type: "incident",
+      priority: "normal",
+      asset_id: null,
+    };
     mosqueMigrationMissing = true;
     assetLinkMigrationMissing = true;
   }
