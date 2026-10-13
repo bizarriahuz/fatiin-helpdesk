@@ -111,3 +111,38 @@ export async function setEndpointActive(
   revalidatePath("/staff/reports");
   return { message: activeValue === "true" ? "Monitoring resumed." : "Monitoring paused." };
 }
+
+export type EndpointAlertTicketState = {
+  message?: string;
+  error?: boolean;
+  ticketId?: string;
+};
+
+export async function createTicketFromEndpointAlert(
+  alertId: string,
+  _previousState: EndpointAlertTicketState,
+): Promise<EndpointAlertTicketState> {
+  if (!uuidPattern.test(alertId)) return { message: "Refresh the page and try again.", error: true };
+
+  const supabase = await createClient();
+  const { data: claims, error: claimsError } = await supabase.auth.getClaims();
+  const userId = claims?.claims?.sub;
+  if (claimsError || typeof userId !== "string") redirect("/");
+
+  const { data: membership, error: membershipError } = await supabase
+    .from("helpdesk_staff")
+    .select("user_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (membershipError || !membership) return { message: "Only designated helpdesk staff can create tickets from alerts.", error: true };
+
+  const { data: ticketId, error: ticketError } = await supabase.rpc("create_ticket_from_endpoint_alert", { p_alert_id: alertId });
+  if (ticketError || typeof ticketId !== "string") {
+    return { message: "We couldn't create a ticket from this alert. Check that the endpoint alert migrations are applied, then refresh the page.", error: true };
+  }
+
+  revalidatePath("/staff/monitoring");
+  revalidatePath("/staff/queue");
+  revalidatePath("/staff/reports");
+  return { message: "Ticket linked to this alert.", ticketId };
+}

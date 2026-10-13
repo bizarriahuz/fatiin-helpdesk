@@ -5,7 +5,7 @@ $AgentRoot = Join-Path $env:ProgramData "FatiinEndpointAgent"
 $ConfigPath = Join-Path $AgentRoot "device.json"
 $TokenPath = Join-Path $AgentRoot "device.token"
 $LogPath = Join-Path $AgentRoot "agent.log"
-$AgentVersion = "0.1.0"
+$AgentVersion = "0.2.0"
 
 function Write-AgentLog([string]$Message) {
   $line = "{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz"), $Message
@@ -42,6 +42,22 @@ function Send-DeviceHeartbeat {
     Get-Percent ((([double]$disk.Size - [double]$disk.FreeSpace) / [double]$disk.Size) * 100)
   } else { $null }
 
+  $defenderRealTimeProtection = $null
+  $defenderSignaturesUpdatedAt = $null
+  try {
+    $defender = Get-MpComputerStatus -ErrorAction Stop
+    if ($null -ne $defender.RealTimeProtectionEnabled) {
+      $defenderRealTimeProtection = [bool]$defender.RealTimeProtectionEnabled
+    }
+    if ($defender.AntivirusSignatureLastUpdated) {
+      $defenderSignaturesUpdatedAt = ([DateTime]$defender.AntivirusSignatureLastUpdated).ToUniversalTime().ToString("o")
+    }
+  } catch {
+    # Defender status is optional on devices where the Defender cmdlet is unavailable.
+  }
+
+  $pendingReboot = Test-PendingReboot
+
   $payload = @{
     deviceId = [string]$config.deviceId
     hostname = $env:COMPUTERNAME
@@ -50,12 +66,33 @@ function Send-DeviceHeartbeat {
     cpuPercent = $cpuPercent
     memoryPercent = $memoryPercent
     diskPercent = $diskPercent
+    defenderRealTimeProtection = $defenderRealTimeProtection
+    defenderSignaturesUpdatedAt = $defenderSignaturesUpdatedAt
+    pendingReboot = $pendingReboot
   } | ConvertTo-Json -Compress
 
   $baseUrl = ([string]$config.apiBaseUrl).TrimEnd("/")
   $heartbeatUrl = "$baseUrl/api/monitoring/heartbeat"
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   $null = Invoke-RestMethod -Method Post -Uri $heartbeatUrl -Headers @{ Authorization = "Bearer $token" } -ContentType "application/json" -Body $payload -TimeoutSec 20
+}
+
+function Test-PendingReboot {
+  try {
+    $rebootKeys = @(
+      "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending",
+      "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
+    )
+    foreach ($key in $rebootKeys) {
+      if (Test-Path -LiteralPath $key) { return $true }
+    }
+
+    $sessionManager = Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
+    if ($sessionManager.PendingFileRenameOperations) { return $true }
+    return $false
+  } catch {
+    return $null
+  }
 }
 
 if ($Once) {

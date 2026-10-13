@@ -11,6 +11,9 @@ type HeartbeatPayload = {
   cpuPercent?: unknown;
   memoryPercent?: unknown;
   diskPercent?: unknown;
+  defenderRealTimeProtection?: unknown;
+  defenderSignaturesUpdatedAt?: unknown;
+  pendingReboot?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -50,8 +53,14 @@ export async function POST(request: Request) {
   const cpuPercent = readPercent(payload.cpuPercent);
   const memoryPercent = readPercent(payload.memoryPercent);
   const diskPercent = readPercent(payload.diskPercent);
+  const defenderRealTimeProtection = readBoolean(payload.defenderRealTimeProtection);
+  const defenderSignaturesUpdatedAt = readTimestamp(payload.defenderSignaturesUpdatedAt);
+  const pendingReboot = readBoolean(payload.pendingReboot);
   if (cpuPercent === undefined || memoryPercent === undefined || diskPercent === undefined) {
     return Response.json({ error: "Health metrics must be numbers between 0 and 100, or null." }, { status: 400 });
+  }
+  if (defenderRealTimeProtection === undefined || defenderSignaturesUpdatedAt === undefined || pendingReboot === undefined) {
+    return Response.json({ error: "Security health details are invalid." }, { status: 400 });
   }
 
   const tokenHash = createHash("sha256").update(token).digest("hex");
@@ -71,6 +80,9 @@ export async function POST(request: Request) {
     cpu_percent: cpuPercent,
     memory_percent: memoryPercent,
     disk_percent: diskPercent,
+    defender_real_time_protection: defenderRealTimeProtection,
+    defender_signatures_updated_at: defenderSignaturesUpdatedAt,
+    pending_reboot: pendingReboot,
     agent_version: payload.agentVersion,
   };
   const { error: updateError } = await admin
@@ -91,6 +103,9 @@ export async function POST(request: Request) {
   });
   if (historyError) return Response.json({ error: "Could not store device health history." }, { status: 503 });
 
+  const { error: alertError } = await admin.rpc("evaluate_endpoint_health_alerts", { p_device_id: device.id });
+  if (alertError) console.error("Could not evaluate endpoint health alerts.", alertError.message);
+
   return Response.json({ received: true, checkedAt }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -103,4 +118,15 @@ function readPercent(value: unknown): number | null | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100
     ? value
     : undefined;
+}
+
+function readBoolean(value: unknown): boolean | null | undefined {
+  if (value === null || value === undefined) return null;
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readTimestamp(value: unknown): string | null | undefined {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string" || value.length > 64 || !Number.isFinite(Date.parse(value))) return undefined;
+  return new Date(value).toISOString();
 }
